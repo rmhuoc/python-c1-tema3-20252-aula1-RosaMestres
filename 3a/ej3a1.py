@@ -25,7 +25,15 @@ def crear_conexion():
     Crea y devuelve una conexión a la base de datos SQLite
     """
     # Implementa la creación de la conexión y retorna el objeto conexión
-    pass
+    try:
+        conexion = sqlite3.connect(DB_PATH)
+        conexion.execute("PRAGMA foreign_keys = ON;")
+        return conexion
+    except sqlite3.Error as e:
+        print(f"Error al crear conexion: {e}")
+        raise
+        
+
 
 def crear_tablas(conexion):
     """
@@ -36,7 +44,29 @@ def crear_tablas(conexion):
     """
     # Implementa la creación de tablas usando SQL
     # Usa conexion.cursor() para crear un cursor y ejecutar comandos SQL
-    pass
+    cursor = conexion.cursor()
+
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS autores (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            nombre TEXT NOT NULL
+        );
+    """)
+                   
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS libros(
+                   id INTEGER PRIMARY KEY AUTOINCREMENT,
+                   titulo TEXT NOT NULL,
+                   anio INTEGER,
+                   autor_id INTEGER NOT NULL,
+                   FOREIGN KEY (autor_id) references autores(id)
+                       ON UPDATE CASCADE
+                       ON UPDATE RESTRICT
+                   );
+    """)
+
+    conexion.commit()
+    
 
 def insertar_autores(conexion, autores):
     """
@@ -45,7 +75,11 @@ def insertar_autores(conexion, autores):
     """
     # Implementa la inserción de autores usando SQL INSERT
     # Usa consultas parametrizadas para mayor seguridad
-    pass
+    cursor = conexion.cursor()
+    cursor.executemany(
+        "INSERT INTO autores (nombre) VALUES (?);",
+        autores
+    ) 
 
 def insertar_libros(conexion, libros):
     """
@@ -54,7 +88,11 @@ def insertar_libros(conexion, libros):
     """
     # Implementa la inserción de libros usando SQL INSERT
     # Usa consultas parametrizadas para mayor seguridad
-    pass
+    cursor = conexion.cursor()
+    cursor.executemany(
+        "INSERT INTO libros (titulo, anio, autor_id) VALUES (?, ?, ?);",
+        libros
+    ) 
 
 def consultar_libros(conexion):
     """
@@ -62,7 +100,27 @@ def consultar_libros(conexion):
     """
     # Implementa una consulta SQL JOIN para obtener libros con sus autores
     # Imprime los resultados formateados
-    pass
+    cursor = conexion.cursor()
+    cursor.execute("""
+        SELECT
+                   l.id,
+                   l.titulo,
+                   l.anio,
+                   a.nombre as autor
+        FROM libros l
+        INNER JOIN autores a ON a.id = l.autor_id
+        ORDER BY l.id;
+    """)
+
+    filas = cursor.fetchall()
+    if not filas:
+        print("(N0 hay libros)")
+        return
+    for id_libro, titulo, anio, autor in filas:
+        anio_txt = anio if anio is not None else "N/A"
+        print(f"[{id_libro}] {titulo} ({anio_txt}) - {autor}")
+     
+
 
 def buscar_libros_por_autor(conexion, nombre_autor):
     """
@@ -70,7 +128,19 @@ def buscar_libros_por_autor(conexion, nombre_autor):
     """
     # Implementa una consulta SQL con WHERE para filtrar por autor
     # Retorna una lista de tuplas (titulo, anio)
-    pass
+    cursor = conexion.cursor()
+    cursor.execute("""
+        SELECT
+                   l.titulo,
+                   l.anio
+        FROM libros l
+        INNER JOIN autores a ON a.id = l.autor_id
+        WHERE a.nombre = ?
+        ORDER BY l.anio, l.titulo
+    """, (nombre_autor,))
+
+    return cursor.fetchall()
+
 
 def actualizar_libro(conexion, id_libro, nuevo_titulo=None, nuevo_anio=None):
     """
@@ -78,14 +148,34 @@ def actualizar_libro(conexion, id_libro, nuevo_titulo=None, nuevo_anio=None):
     """
     # Implementa la actualización usando SQL UPDATE
     # Solo actualiza los campos que no son None
-    pass
+    campos = []
+    valores = []
+
+    if nuevo_titulo is not None:
+        campos.append ("titulo =?")
+        valores.append(nuevo_titulo)
+
+    if nuevo_anio is not None:
+        campos.append ("anio =?")
+        valores.append(nuevo_anio)   
+    if not campos:
+        #nothing to do
+        return
+    
+    valores.append(id_libro)
+    sql = f"UPDATE libros SET {','.join (campos)} WHERE id = ?";
+    cursor = conexion.cursor()
+    cursor.execute(sql, valores)
+    conexion.commit()
 
 def eliminar_libro(conexion, id_libro):
     """
     Elimina un libro por su ID
     """
     # Implementa la eliminación usando SQL DELETE
-    pass
+    cursor = conexion.cursor()
+    cursor.execute("DELETE FROM libros WHERE id = ?;", (id_libro,))
+    conexion.commit()
 
 def ejemplo_transaccion(conexion):
     """
