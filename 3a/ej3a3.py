@@ -32,7 +32,26 @@ def conectar_bd() -> sqlite3.Connection:
     # 2. Conecta a la base de datos
     # 3. Configura la conexión para que devuelva las filas como diccionarios (opcional)
     # 4. Retorna la conexión
-    pass
+
+    #1) verifica que existe el archivo
+    if not os.path.exists(DB_PATH):
+        raise FileNotFoundError(f"No s encontro la base de datos en: {DB_PATH}")
+    
+    #2) conecta
+    conn = sqlite3.connect(DB_PATH)
+
+    #3) configura row_factory para devolver filss como "diccionarios"
+    conn.row_factory = sqlite3.Row
+
+    try:
+        conn.execute("PRAGMA foreign_keys = ON;")
+    except sqlite3.Error:
+        # do nothing
+        pass
+    
+    return conn
+
+    
 
 def convertir_a_json(conexion: sqlite3.Connection) -> Dict[str, List[Dict[str, Any]]]:
     """
@@ -54,7 +73,34 @@ def convertir_a_json(conexion: sqlite3.Connection) -> Dict[str, List[Dict[str, A
     #    c. Convierte cada fila a un diccionario (clave: nombre columna, valor: valor celda)
     #    d. Añade el diccionario a una lista para esa tabla
     # 4. Retorna el diccionario completo con todas las tablas
-    pass
+
+    #1) crea diccionario vacio
+    resultado: Dict[str, List[Dict[str, any]]] = {}
+    cur = conexion.cursor()
+
+    #2) lista de tablas 
+    cur.execute("""
+        SELECT name
+        FROM sqlite_master
+        WHERE type='table'
+        AND name NOT LIKE 'sqlite_%'
+        ORDER BY name;
+                """)
+    
+    tablas = [row[0] for row in cur.fetchall()]
+    
+     #3) para cada tabla, SELECT * y convertir filas a dict
+    for tabla in tablas:
+        cur.execute(f"SELECT * FROM {tabla};")
+        rows = cur.fetchall()
+
+        resultado[tabla] = [dict(r) for r in rows]
+    
+    return resultado
+
+
+    
+
 
 def convertir_a_dataframes(conexion: sqlite3.Connection) -> Dict[str, pd.DataFrame]:
     """
@@ -76,7 +122,71 @@ def convertir_a_dataframes(conexion: sqlite3.Connection) -> Dict[str, pd.DataFra
     #    - Ventas con información de vendedores
     #    - Vendedores con regiones
     # 5. Retorna el diccionario con todos los DataFrames
-    pass
+
+    # 1. Crea un diccionario vacío para los DataFrames
+    dfs: Dict[str, pd.DataFrame] = {}
+
+    # 2. lista las tablas
+    tablas_df = pd.read_sql_query("""
+        SELECT name
+        FROM sqlite_master
+        WHERE type='table'
+          AND name NOT LIKE 'sqlite_%'
+        ORDER BY name;
+    """, conexion)
+    tablas = tablas_df["name"].tolist()
+
+    # 3) DataFrame por tabla
+    for tabla in tablas:
+        dfs[tabla] = pd.read_sql_query(f"SELECT * FROM {tabla};", conexion)
+
+    # Helper: comprobar si existe tabla y columna (para JOINs “seguros”)
+    def table_exists(t: str) -> bool:
+        return t in dfs
+
+    def col_exists(t: str, c: str) -> bool:
+        return table_exists(t) and c in dfs[t].columns
+
+    # 4) JOINs relevantes (los intentamos crear de forma flexible)
+    # Asumimos nombres típicos. Si tu BD usa otros, ajusta los campos.
+    # - ventas con productos: ventas.producto_id = productos.id
+    if table_exists("ventas") and table_exists("productos"):
+        if col_exists("ventas", "producto_id") and (col_exists("productos", "id") or col_exists("productos", "producto_id")):
+            productos_pk = "id" if col_exists("productos", "id") else "producto_id"
+            q = f"""
+                SELECT v.*, p.*
+                FROM ventas v
+                LEFT JOIN productos p
+                  ON v.producto_id = p.{productos_pk};
+            """
+            dfs["ventas_productos"] = pd.read_sql_query(q, conexion)
+
+    # - ventas con vendedores: ventas.vendedor_id = vendedores.id
+    if table_exists("ventas") and table_exists("vendedores"):
+        if col_exists("ventas", "vendedor_id") and (col_exists("vendedores", "id") or col_exists("vendedores", "vendedor_id")):
+            vendedores_pk = "id" if col_exists("vendedores", "id") else "vendedor_id"
+            q = f"""
+                SELECT v.*, ve.*
+                FROM ventas v
+                LEFT JOIN vendedores ve
+                  ON v.vendedor_id = ve.{vendedores_pk};
+            """
+            dfs["ventas_vendedores"] = pd.read_sql_query(q, conexion)
+
+    # - vendedores con regiones: vendedores.region_id = regiones.id
+    if table_exists("vendedores") and table_exists("regiones"):
+        if col_exists("vendedores", "region_id") and (col_exists("regiones", "id") or col_exists("regiones", "region_id")):
+            regiones_pk = "id" if col_exists("regiones", "id") else "region_id"
+            q = f"""
+                SELECT ve.*, r.*
+                FROM vendedores ve
+                LEFT JOIN regiones r
+                  ON ve.region_id = r.{regiones_pk};
+            """
+            dfs["vendedores_regiones"] = pd.read_sql_query(q, conexion)
+
+    return dfs
+
 
 if __name__ == "__main__":
     try:
