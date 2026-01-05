@@ -42,7 +42,20 @@ def auth_required(func):
         5. Si no coincide o hay algún error, devolver un error 401 Unauthorized
         """
         # TODO: Implementa la lógica del decorador según las instrucciones
-        pass
+        auth_header = request.headers.get("Authorization", "")
+
+        # Debe ser: "Bearer TOKEN"
+        if not auth_header.startswith("Bearer "):
+            return jsonify({"error": "Token inválido o ausente"}), 401
+
+        token = auth_header.split(" ", 1)[1].strip()
+        if not token or token != API_TOKEN:
+            return jsonify({"error": "Token inválido o ausente"}), 401
+
+        # (Opcional) guardar info en g por si luego quieres usarla
+        g.token = token
+
+        return func(*args, **kwargs)
     return decorated_function
 
 
@@ -96,9 +109,13 @@ def create_app():
             }
         """
         # TODO: Implementa este endpoint para devolver el mensaje secreto
-        pass
+        return jsonify({
+            "message": "¡Has accedido al secreto!",
+            "secret": "La respuesta a la vida, el universo y todo lo demás es 42"
+        }), 200
 
     return app
+
 
 if __name__ == '__main__':
     app = create_app()
