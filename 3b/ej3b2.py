@@ -36,13 +36,25 @@ class Author(db.Model):
     # - id: clave primaria autoincremental
     # - name: nombre del autor (obligatorio)
     # - Una relación con los libros usando db.relationship
-    pass
+    __tablename__ = "authors"
+
+    id = db.Column(db.Integer, primary_key=True, autoincrement=True)
+    name = db.Column(db.String, nullable=False)
+
+    books = db.relationship(
+        "Book",
+        back_populates="author",
+        cascade="all, delete-orphan"
+    )
 
     def to_dict(self):
         """Convierte el autor a un diccionario para la respuesta JSON"""
         # Implementa este método para devolver id y name
         # No incluyas la lista de libros para evitar recursión infinita
-        pass
+        return {
+            "id": self.id,
+            "name": self.name
+        }
 
 
 class Book(db.Model):
@@ -56,12 +68,25 @@ class Book(db.Model):
     # - title: título del libro (obligatorio)
     # - year: año de publicación (opcional)
     # - author_id: clave foránea que relaciona con la tabla 'authors'
-    pass
+    __tablename__ = "books"
+
+    id = db.Column(db.Integer, primary_key=True, autoincrement=True)
+    title = db.Column(db.String, nullable=False)
+    year = db.Column(db.Integer, nullable=True)
+
+    author_id = db.Column(db.Integer, db.ForeignKey("authors.id"), nullable=False)
+
+    author = db.relationship("Author", back_populates="books")
 
     def to_dict(self):
         """Convierte el libro a un diccionario para la respuesta JSON"""
         # Implementa este método para devolver id, title, year y author_id
-        pass
+        return {
+            "id": self.id,
+            "title": self.title,
+            "year": self.year,
+            "author_id": self.author_id
+        }
 
 
 def create_app():
@@ -91,7 +116,8 @@ def create_app():
         # - Consulta todos los autores
         # - Convierte cada autor a diccionario usando to_dict()
         # - Devuelve la lista en formato JSON
-        pass
+        autores = Author.query.order_by(Author.id).all()
+        return jsonify([a.to_dict() for a in autores]), 200
 
     @app.route('/authors', methods=['POST'])
     def add_author():
@@ -104,7 +130,17 @@ def create_app():
         # - Crea un nuevo autor con el nombre proporcionado
         # - Lo guarda en la base de datos
         # - Devuelve el autor creado con código 201
-        pass
+        data = request.get_json(silent=True) or {}
+        name = data.get("name")
+
+        if not name or not isinstance(name, str):
+            return jsonify({"error": "Field 'name' is required"}), 400
+        
+        autor = Author(name=name)
+        db.session.add(autor)
+        db.session.commit()
+
+        return jsonify(autor.to_dict()), 201
 
     @app.route('/authors/<int:author_id>', methods=['GET'])
     def get_author(author_id):
@@ -114,7 +150,10 @@ def create_app():
         # Implementa este endpoint:
         # - Busca el autor por ID (usa get_or_404 para gestionar el error 404)
         # - Devuelve los detalles del autor y su lista de libros
-        pass
+        autor = Author.query.get_or_404(author_id)
+        payload = autor.to_dict()
+        payload["books"] = [b.to_dict() for b in autor.books]
+        return jsonify(payload), 200
 
     # Endpoints de Libros
     @app.route('/books', methods=['GET'])
@@ -126,7 +165,8 @@ def create_app():
         # - Consulta todos los libros
         # - Convierte cada libro a diccionario
         # - Devuelve la lista en formato JSON
-        pass
+        libros = Book.query.order_by(Book.id).all()
+        return jsonify([b.to_dict() for b in libros]), 200
 
     @app.route('/books', methods=['POST'])
     def add_book():
@@ -139,7 +179,31 @@ def create_app():
         # - Crea un nuevo libro con título, autor_id y año (opcional)
         # - Lo guarda en la base de datos
         # - Devuelve el libro creado con código 201
-        pass
+        data = request.get_json(silent=True) or {}
+        title = data.get("title")
+        author_id = data.get("author_id")
+        year = data.get("year", None)
+
+        if not title or not isinstance(title, str):
+            return jsonify({"error": "Field 'title' is required"}), 400
+        if author_id is None or not isinstance(author_id, int):
+            return jsonify({"error": "Field 'author_id' is required and must be int"}), 400
+
+        # Verificar que el autor existe
+        Author.query.get_or_404(author_id)
+
+        if year is not None:
+            try:
+                year = int(year)
+            except (TypeError, ValueError):
+                return jsonify({"error": "Field 'year' must be an integer"}), 400
+
+        libro = Book(title=title, author_id=author_id, year=year)
+        db.session.add(libro)
+        db.session.commit()
+
+        return jsonify(libro.to_dict()), 201
+
 
     @app.route('/books/<int:book_id>', methods=['GET'])
     def get_book(book_id):
@@ -149,7 +213,8 @@ def create_app():
         # Implementa este endpoint:
         # - Busca el libro por ID (usa get_or_404 para gestionar el error 404)
         # - Devuelve los detalles del libro
-        pass
+        libro = Book.query.get_or_404(book_id)
+        return jsonify(libro.to_dict()), 200
 
     @app.route('/books/<int:book_id>', methods=['DELETE'])
     def delete_book(book_id):
@@ -160,7 +225,11 @@ def create_app():
         # - Busca el libro por ID (usa get_or_404)
         # - Elimina el libro de la base de datos
         # - Devuelve respuesta vacía con código 204
-        pass
+        libro = Book.query.get_or_404(book_id)
+        db.session.delete(libro)
+        db.session.commit()
+        return ("", 204)
+
 
     @app.route('/books/<int:book_id>', methods=['PUT'])
     def update_book(book_id):
@@ -174,7 +243,25 @@ def create_app():
         # - Actualiza los campos proporcionados (título y/o año)
         # - Guarda los cambios en la base de datos
         # - Devuelve el libro actualizado
-        pass
+        data = request.get_json(silent=True) or {}
+        libro = Book.query.get_or_404(book_id)
+
+        if "title" in data:
+            if data["title"] is None or not isinstance(data["title"], str) or data["title"] == "":
+                return jsonify({"error": "Field 'title' must be a non-empty string"}), 400
+            libro.title = data["title"]
+
+        if "year" in data:
+            if data["year"] is None:
+                libro.year = None
+            else:
+                try:
+                    libro.year = int(data["year"])
+                except (TypeError, ValueError):
+                    return jsonify({"error": "Field 'year' must be an integer"}), 400
+
+        db.session.commit()
+        return jsonify(libro.to_dict()), 200
 
     return app
 
