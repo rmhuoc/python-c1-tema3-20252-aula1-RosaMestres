@@ -39,25 +39,46 @@ class Author(db.Model):
     # - id: clave primaria autoincremental
     # - name: nombre del autor (obligatorio)
     # - Una relación con los libros usando db.relationship
-    pass
+    __tablename__ = "authors"
+
+    id = db.Column(db.Integer, primary_key=True, autoincrement=True)
+    name = db.Column(db.String, nullable=False)
+
+    books = db.relationship(
+        "Book",
+        back_populates="author",
+        cascade="all, delete-orphan"
+    )
+
+    _schema_cache = None  # cache a nivel de clase
 
     @classmethod
     def load_schema(cls):
         """Carga el esquema JSON para validar datos de autor"""
         # Implementa este método para cargar el esquema desde el archivo 'author_schema.json'.
-        pass
+        if cls._schema_cache is not None:
+            return cls._schema_cache
+
+        base_dir = os.path.dirname(os.path.abspath(__file__))
+        schema_path = os.path.join(base_dir, "author_schema.json")
+
+        with open(schema_path, "r", encoding="utf-8") as f:
+            cls._schema_cache = json.load(f)
+
+        return cls._schema_cache
 
     @classmethod
     def check_schema(cls, data):
         """Valida los datos contra el esquema JSON de autor"""
         # Implementa este método para validar los datos usando jsonschema.validate()
-        pass
+        schema = cls.load_schema()
+        validate(instance=data, schema=schema)  # lanza ValidationError si no cumple
 
     def to_dict(self):
         """Convierte el autor a un diccionario para la respuesta JSON"""
         # Implementa este método para devolver id y name
         # No incluyas la lista de libros para evitar recursión infinita
-        pass
+        return {"id": self.id, "name": self.name}
 
 
 class Book(db.Model):
@@ -71,24 +92,43 @@ class Book(db.Model):
     # - title: título del libro (obligatorio)
     # - year: año de publicación (opcional)
     # - author_id: clave foránea que relaciona con la tabla 'authors'
-    pass
+    __tablename__ = "books"
+
+    id = db.Column(db.Integer, primary_key=True, autoincrement=True)
+    title = db.Column(db.String, nullable=False)
+    year = db.Column(db.Integer, nullable=True)
+
+    author_id = db.Column(db.Integer, db.ForeignKey("authors.id"), nullable=False)
+    author = db.relationship("Author", back_populates="books")
+
+    _schema_cache = None
 
     @classmethod
     def load_schema(cls):
         """ Carga el esquema JSON para validar datos de libro """
         # Implementa este método para cargar el esquema desde el archivo 'book_schema.json'
-        pass
+        if cls._schema_cache is not None:
+            return cls._schema_cache
+
+        base_dir = os.path.dirname(os.path.abspath(__file__))
+        schema_path = os.path.join(base_dir, "book_schema.json")
+
+        with open(schema_path, "r", encoding="utf-8") as f:
+            cls._schema_cache = json.load(f)
+
+        return cls._schema_cache
 
     @classmethod
     def check_schema(cls, data):
         """Valida los datos contra el esquema JSON de libro"""
         # Implementa este método similar a Author.check_schema()
-        pass
+        schema = cls.load_schema()
+        validate(instance=data, schema=schema)
 
     def to_dict(self):
         """Convierte el libro a un diccionario para la respuesta JSON"""
         # Implementa este método para devolver id, title, year y author_id
-        pass
+        return {"id": self.id, "title": self.title, "author_id": self.author_id, "year": self.year}
 
 
 def create_app():
@@ -143,7 +183,19 @@ def create_app():
             }
         """
         # TODO: Implementa este endpoint según las instrucciones
-        pass
+        data = request.get_json(silent=True)
+        if data is None:
+            return jsonify({"error": "El cuerpo debe ser JSON válido"}), 400
+
+        try:
+            Author.check_schema(data)
+        except ValidationError as e:
+            return jsonify({"error": e.message}), 400
+
+        autor = Author(name=data["name"])
+        db.session.add(autor)
+        db.session.commit()
+        return jsonify(autor.to_dict()), 201
 
     @app.route('/books', methods=['POST'])
     def add_book():
@@ -193,7 +245,29 @@ def create_app():
             }
         """
         # TODO: Implementa este endpoint según las instrucciones
-        pass
+        data = request.get_json(silent=True)
+        if data is None:
+            return jsonify({"error": "El cuerpo debe ser JSON válido"}), 400
+
+        try:
+            Book.check_schema(data)
+        except ValidationError as e:
+            return jsonify({"error": e.message}), 400
+
+        # Requisito: si author_id no existe -> 404
+        author_id = data["author_id"]
+        autor = db.session.get(Author, author_id)
+        if autor is None:
+            return jsonify({"error": "No existe un autor con el id proporcionado"}), 404
+
+        libro = Book(
+            title=data["title"],
+            author_id=author_id,
+            year=data.get("year")
+        )
+        db.session.add(libro)
+        db.session.commit()
+        return jsonify(libro.to_dict()), 201
 
     return app
 
