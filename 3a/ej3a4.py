@@ -121,7 +121,18 @@ def crear_conexion() -> pymongo.database.Database:
     Crea y devuelve una conexión a la base de datos MongoDB
     """
     # Debes conectarte a la base de datos MongoDB usando PyMongo
-    pass
+    if not MONGODB_HOST or not MONGODB_PORT:
+        raise ValueError("Faltan MONGODB_HOST y/o MONGODB_PORT. Revisa docker-compose.yml")
+    
+    uri = (
+        f"mongodb://{MONGODB_USERNAME}:{MONGODB_PASSWORD}"
+        f"@{MONGODB_HOST}:{MONGODB_PORT}/{DB_NAME}"
+        f"?authSource=admin"
+    )
+
+    client = pymongo.MongoClient(uri, serverSelectionTimeoutMS=5000)
+    client.admin.command("ping")  # fuerza conexión y valida credenciales
+    return client[DB_NAME]
 
 def crear_colecciones(db: pymongo.database.Database) -> None:
     """
@@ -132,7 +143,16 @@ def crear_colecciones(db: pymongo.database.Database) -> None:
     # Debes crear colecciones para 'autores' y 'libros'
     # 1. Crear colección de autores con índice por nombre
     # 2. Crear colección de libros con índices
-    pass
+    autores = db["autores"]
+    libros = db["libros"]
+
+    # Autores: índice por nombre (único para evitar duplicados, opcional)
+    autores.create_index([("nombre", pymongo.ASCENDING)], unique=True)
+
+    # Libros: índices típicos
+    libros.create_index([("titulo", pymongo.ASCENDING)])
+    libros.create_index([("anio", pymongo.ASCENDING)])
+    libros.create_index([("autor_id", pymongo.ASCENDING)])
 
 def insertar_autores(db: pymongo.database.Database, autores: List[Tuple[str]]) -> List[str]:
     """
@@ -142,7 +162,21 @@ def insertar_autores(db: pymongo.database.Database, autores: List[Tuple[str]]) -
     # 1. Convertir las tuplas a documentos
     # 2. Insertar los documentos
     # 3. Devolver los IDs como strings
-    pass
+    if not autores:
+        return []
+
+    docs = [{"nombre": a[0]} for a in autores]
+
+    # ordered=False permite insertar los que pueda aunque haya duplicados (si índice unique)
+    try:
+        res = db["autores"].insert_many(docs, ordered=False)
+        return [str(_id) for _id in res.inserted_ids]
+    except pymongo.errors.BulkWriteError as e:
+        # Si hay duplicados por índice unique, algunos no se insertan.
+        # Recuperamos ids de los que existen/insertados:
+        nombres = [d["nombre"] for d in docs]
+        encontrados = db["autores"].find({"nombre": {"$in": nombres}}, {"_id": 1})
+        return [str(x["_id"]) for x in encontrados]
 
 def insertar_libros(db: pymongo.database.Database, libros: List[Tuple[str, int, str]]) -> List[str]:
     """
@@ -152,7 +186,19 @@ def insertar_libros(db: pymongo.database.Database, libros: List[Tuple[str, int, 
     # 1. Convertir las tuplas a documentos
     # 2. Insertar los documentos
     # 3. Devolver los IDs como strings
-    pass
+    if not libros:
+        return []
+
+    docs = []
+    for titulo, anio, autor_id_str in libros:
+        docs.append({
+            "titulo": titulo,
+            "anio": int(anio),
+            "autor_id": ObjectId(autor_id_str)
+        })
+
+    res = db["libros"].insert_many(docs)
+    return [str(_id) for _id in res.inserted_ids]
 
 def consultar_libros(db: pymongo.database.Database) -> None:
     """
@@ -161,7 +207,24 @@ def consultar_libros(db: pymongo.database.Database) -> None:
     # Debes realizar los siguientes pasos:
     # 1. Realizar una agregación para unir libros con autores
     # 2. Mostrar los resultados
-    pass
+    pipeline = [
+        {
+            "$lookup": {
+                "from": "autores",
+                "localField": "autor_id",
+                "foreignField": "_id",
+                "as": "autor"
+            }
+        },
+        {"$unwind": {"path": "$autor", "preserveNullAndEmptyArrays": True}},
+        {"$project": {"_id": 0, "titulo": 1, "anio": 1, "autor_nombre": "$autor.nombre"}},
+        {"$sort": {"anio": 1, "titulo": 1}},
+    ]
+
+    for doc in db["libros"].aggregate(pipeline):
+        print(f"- {doc.get('titulo')} ({doc.get('anio')}) - {doc.get('autor_nombre')}")
+
+
 
 def buscar_libros_por_autor(db: pymongo.database.Database, nombre_autor: str) -> List[Tuple[str, int]]:
     """
@@ -170,7 +233,12 @@ def buscar_libros_por_autor(db: pymongo.database.Database, nombre_autor: str) ->
     # Debes realizar los siguientes pasos:
     # 1. Primero encontrar el autor y buscar todos los libros del autor
     # 2. Convertir a lista de tuplas (titulo, anio)
-    pass
+    autor = db["autores"].find_one({"nombre": nombre_autor}, {"_id": 1})
+    if not autor:
+        return []
+
+    cursor = db["libros"].find({"autor_id": autor["_id"]}, {"titulo": 1, "anio": 1, "_id": 0}).sort([("anio", 1), ("titulo", 1)])
+    return [(d["titulo"], int(d["anio"])) for d in cursor]
 
 def actualizar_libro(
         db: pymongo.database.Database,
@@ -184,7 +252,20 @@ def actualizar_libro(
     # Debes realizar los siguientes pasos:
     # 1. Crear diccionario de actualización
     # 2. Realizar la actualización
-    pass
+    pdate: dict = {}
+    if nuevo_titulo is not None:
+        update["titulo"] = nuevo_titulo
+    if nuevo_anio is not None:
+        update["anio"] = int(nuevo_anio)
+
+    if not update:
+        return False  # nada que actualizar
+
+    res = db["libros"].update_one(
+        {"_id": ObjectId(id_libro)},
+        {"$set": update}
+    )
+    return res.matched_count == 1
 
 def eliminar_libro(
         db: pymongo.database.Database,
@@ -194,7 +275,8 @@ def eliminar_libro(
     Elimina un libro por su ID
     """
     # Debes eliminar el libro con el ID proporcionado
-    pass
+    res = db["libros"].delete_one({"_id": ObjectId(id_libro)})
+    return res.deleted_count == 1
 
 def ejemplo_transaccion(db: pymongo.database.Database) -> bool:
     """
@@ -204,7 +286,33 @@ def ejemplo_transaccion(db: pymongo.database.Database) -> bool:
     # 1. Insertar un nuevo autor
     # 2. Insertar dos libros del autor
     # Intentar limpiar los datos en caso de error
-    pass
+    autores_col = db["autores"]
+    libros_col = db["libros"]
+
+    autor_id = None
+    libro_ids: List[ObjectId] = []
+
+    try:
+        # 1) Insertar autor
+        autor_res = autores_col.insert_one({"nombre": "Autor Temporal"})
+        autor_id = autor_res.inserted_id
+
+        # 2) Insertar dos libros
+        r = libros_col.insert_many([
+            {"titulo": "Libro Temporal 1", "anio": 2001, "autor_id": autor_id},
+            {"titulo": "Libro Temporal 2", "anio": 2002, "autor_id": autor_id},
+        ])
+        libro_ids = r.inserted_ids
+
+        return True
+
+    except Exception:
+        # Rollback manual
+        if libro_ids:
+            libros_col.delete_many({"_id": {"$in": libro_ids}})
+        if autor_id:
+            autores_col.delete_one({"_id": autor_id})
+        return False
 
 
 if __name__ == "__main__":
