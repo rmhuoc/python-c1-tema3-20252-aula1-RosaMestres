@@ -42,7 +42,19 @@ def generate_jwt_token(username):
     # - 'iat' (issued at): Tiempo de emisión
     # - 'exp' (expiration): Tiempo de expiración
     # Usa JWT_SECRET_KEY para firmar el token
-    pass
+    now = datetime.datetime.utcnow()
+    payload = {
+        "sub": username,
+        "iat": now,
+        "exp": now + JWT_EXPIRATION_DELTA
+    }
+
+    token = jwt.encode(payload, JWT_SECRET_KEY, algorithm="HS256")
+
+    # PyJWT a veces devuelve str y a veces bytes (según versión)
+    if isinstance(token, bytes):
+        token = token.decode("utf-8")
+    return token
 
 def jwt_required(func):
     """
@@ -67,7 +79,24 @@ def jwt_required(func):
         4. Si hay algún error (token expirado, inválido, etc.), devolver un error apropiado
         """
         # TODO: Implementa la lógica del decorador según las instrucciones
-        pass
+        auth_header = request.headers.get("Authorization", "")
+
+        if not auth_header.startswith("Bearer "):
+            return jsonify({"error": "Token inválido o ausente"}), 401
+
+        token = auth_header.split(" ", 1)[1].strip()
+        if not token:
+            return jsonify({"error": "Token inválido o ausente"}), 401
+
+        try:
+            # Devuelve el payload si es válido
+            jwt.decode(token, JWT_SECRET_KEY, algorithms=["HS256"])
+        except jwt.ExpiredSignatureError:
+            return jsonify({"error": "Token expirado"}), 401
+        except jwt.InvalidTokenError:
+            return jsonify({"error": "Token inválido o ausente"}), 401
+
+        return func(*args, **kwargs)
     return decorated_function
 
 
@@ -126,7 +155,24 @@ def create_app():
             }
         """
         # TODO: Implementa este endpoint según las instrucciones
-        pass
+        data = request.get_json(silent=True) or {}
+        username = data.get("username")
+        password = data.get("password")
+
+        if not username or not password:
+            return jsonify({"error": "Credenciales inválidas"}), 401
+
+        if USER_CREDENTIALS.get(username) != password:
+            return jsonify({"error": "Credenciales inválidas"}), 401
+
+        token = generate_jwt_token(username)
+        expires_at = (datetime.datetime.utcnow() + JWT_EXPIRATION_DELTA).replace(microsecond=0).isoformat() + "Z"
+
+        return jsonify({
+            "token": token,
+            "expires_at": expires_at
+        }), 200
+
 
     @app.route('/api/secret', methods=['GET'])
     @jwt_required
@@ -154,7 +200,10 @@ def create_app():
             }
         """
         # TODO: Implementa este endpoint según las instrucciones
-        pass
+        return jsonify({
+            "message": "¡Has accedido al secreto con JWT!",
+            "secret": "La respuesta a la vida, el universo y todo lo demás es 42"
+        }), 200
 
     return app
 
