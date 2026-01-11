@@ -24,10 +24,10 @@ from bson.objectid import ObjectId
 
 # Configuración de MongoDB (la debes obtener de "docker-compose.yml"):
 DB_NAME = "biblioteca"
-MONGODB_PORT = 0
-MONGODB_HOST = ""
-MONGODB_USERNAME = ""
-MONGODB_PASSWORD = ""
+MONGODB_PORT = 27017
+MONGODB_HOST = "localhost"
+MONGODB_USERNAME = "testuser"
+MONGODB_PASSWORD = "testpass"
 
 def verificar_docker_instalado() -> bool:
     """
@@ -252,7 +252,7 @@ def actualizar_libro(
     # Debes realizar los siguientes pasos:
     # 1. Crear diccionario de actualización
     # 2. Realizar la actualización
-    pdate: dict = {}
+    update: dict = {}
     if nuevo_titulo is not None:
         update["titulo"] = nuevo_titulo
     if nuevo_anio is not None:
@@ -271,7 +271,7 @@ def eliminar_libro(
         db: pymongo.database.Database,
         id_libro: str
 ) -> bool:
-    """
+    """s
     Elimina un libro por su ID
     """
     # Debes eliminar el libro con el ID proporcionado
